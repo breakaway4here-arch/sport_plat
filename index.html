@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="居家训练">
+  <meta name="theme-color" content="#2ecc71">
+  <title>居家训练计划</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="manifest" href="manifest.json">
+</head>
+<body>
+
+  <header class="app-header">🏠 居家训练计划</header>
+
+  <main>
+    <section id="tab-plan" class="tab-content active"></section>
+    <section id="tab-today" class="tab-content"></section>
+    <section id="tab-history" class="tab-content"></section>
+    <section id="tab-stats" class="tab-content"></section>
+  </main>
+
+  <nav class="tab-bar">
+    <button class="tab-btn active" data-tab="plan">
+      <span class="icon">📋</span> 计划
+    </button>
+    <button class="tab-btn" data-tab="today">
+      <span class="icon">🏋️</span> 训练
+    </button>
+    <button class="tab-btn" data-tab="history">
+      <span class="icon">✅</span> 打卡
+    </button>
+    <button class="tab-btn" data-tab="stats">
+      <span class="icon">📊</span> 统计
+    </button>
+  </nav>
+
+  <script src="js/exercises.js"></script>
+  <script src="js/app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js');
+    }
+  </script>
+</body>
+</html>
