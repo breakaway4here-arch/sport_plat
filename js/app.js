@@ -39,7 +39,7 @@ function assignGoalsToDays(strengthGoals, hasCardio, hasCore, trainingDayIndices
 
   const assignments = {};
 
-  if (numStrength === 0 && !hasCardio) return assignments;
+  if (numStrength === 0 && !hasCardio && !hasCore) return assignments;
 
   // 情况1：力量目标数 <= 训练天数 — 每个力量目标一天，剩余给有氧
   if (numStrength <= numDays && numStrength > 0) {
@@ -74,6 +74,13 @@ function assignGoalsToDays(strengthGoals, hasCardio, hasCore, trainingDayIndices
   if (numStrength === 0 && hasCardio) {
     for (const idx of trainingDayIndices) {
       assignments[idx] = ['有氧'];
+    }
+  }
+
+  // 情况4：只有核心
+  if (numStrength === 0 && !hasCardio && hasCore) {
+    for (const idx of trainingDayIndices) {
+      assignments[idx] = ['核心'];
     }
   }
 
