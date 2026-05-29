@@ -1,7 +1,22 @@
 // ====== sport_plat - 居家训练计划 ======
 
 const STORAGE_KEY = 'sport_plat';
+const ACTIVE_TAB_KEY = 'sport_plat_active_tab';
 const pendingCustomItemsByDate = {};
+const pullRefreshEl = document.getElementById('pull-refresh');
+const pullRefreshIconEl = pullRefreshEl?.querySelector('.pull-refresh-icon');
+const pullRefreshTextEl = pullRefreshEl?.querySelector('.pull-refresh-text');
+const PULL_REFRESH_THRESHOLD = 72;
+const PULL_REFRESH_MAX = 120;
+const pullRefreshState = {
+  active: false,
+  armed: false,
+  refreshing: false,
+  pointerId: null,
+  startY: 0,
+  currentY: 0,
+};
+let currentTab = 'plan';
 
 function loadData() {
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -11,6 +26,20 @@ function loadData() {
 
 function saveData(data) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+}
+
+function saveActiveTab(tabName) {
+  try {
+    sessionStorage.setItem(ACTIVE_TAB_KEY, tabName);
+  } catch {}
+}
+
+function getSavedActiveTab() {
+  try {
+    return sessionStorage.getItem(ACTIVE_TAB_KEY);
+  } catch {
+    return null;
+  }
 }
 
 function escapeHTML(value) {
@@ -335,12 +364,106 @@ function loadExerciseImage(exercise, imgEl) {
 // ====== UI 渲染 ======
 
 function switchTab(tabName) {
+  currentTab = tabName;
+  saveActiveTab(tabName);
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tabName));
   document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === 'tab-' + tabName));
   if (tabName === 'plan') renderPlanTab();
   if (tabName === 'today') renderToday();
   if (tabName === 'history') renderHistory();
   if (tabName === 'stats') renderStats();
+}
+
+function isPullRefreshBlocked(target) {
+  if (document.querySelector('.modal-overlay')) return true;
+  return !!target.closest('input, textarea, select, button, a, .chip, .btn, .modal, [contenteditable="true"]');
+}
+
+function getPullRefreshText() {
+  if (pullRefreshState.refreshing) return '刷新中...';
+  return pullRefreshState.armed ? '松开刷新' : '下拉刷新';
+}
+
+function renderPullRefresh(distance = 0) {
+  if (!pullRefreshEl) return;
+  const clamped = Math.max(0, Math.min(distance, PULL_REFRESH_MAX));
+  const visible = clamped > 0 || pullRefreshState.refreshing;
+  const progress = pullRefreshState.refreshing ? PULL_REFRESH_THRESHOLD : clamped;
+  const translateY = pullRefreshState.refreshing
+    ? 0
+    : -120 + Math.min(progress, PULL_REFRESH_THRESHOLD) / PULL_REFRESH_THRESHOLD * 120;
+  pullRefreshEl.classList.toggle('visible', visible);
+  pullRefreshEl.classList.toggle('armed', pullRefreshState.armed && !pullRefreshState.refreshing);
+  pullRefreshEl.classList.toggle('refreshing', pullRefreshState.refreshing);
+  pullRefreshEl.style.transform = `translate(-50%, ${translateY}%)`;
+  pullRefreshEl.setAttribute('aria-hidden', visible ? 'false' : 'true');
+  if (pullRefreshIconEl) pullRefreshIconEl.textContent = pullRefreshState.refreshing ? '⟳' : '↓';
+  if (pullRefreshTextEl) pullRefreshTextEl.textContent = getPullRefreshText();
+}
+
+function resetPullRefresh() {
+  pullRefreshState.active = false;
+  pullRefreshState.armed = false;
+  pullRefreshState.pointerId = null;
+  pullRefreshState.startY = 0;
+  pullRefreshState.currentY = 0;
+  if (!pullRefreshState.refreshing) renderPullRefresh(0);
+}
+
+function beginPullRefresh(pointerId, clientY) {
+  if (pullRefreshState.refreshing || window.scrollY > 0) return false;
+  pullRefreshState.active = true;
+  pullRefreshState.armed = false;
+  pullRefreshState.pointerId = pointerId;
+  pullRefreshState.startY = clientY;
+  pullRefreshState.currentY = clientY;
+  renderPullRefresh(0);
+  return true;
+}
+
+function updatePullRefresh(clientY) {
+  if (!pullRefreshState.active || pullRefreshState.refreshing) return;
+  const delta = clientY - pullRefreshState.startY;
+  if (delta <= 0 || window.scrollY > 0) {
+    pullRefreshState.armed = false;
+    renderPullRefresh(0);
+    return;
+  }
+  const distance = Math.min(delta, PULL_REFRESH_MAX);
+  pullRefreshState.currentY = clientY;
+  pullRefreshState.armed = delta >= PULL_REFRESH_THRESHOLD;
+  renderPullRefresh(distance);
+}
+
+function endPullRefresh() {
+  if (!pullRefreshState.active) return;
+  const shouldRefresh = pullRefreshState.armed && !pullRefreshState.refreshing;
+  resetPullRefresh();
+  if (shouldRefresh) triggerPullRefresh();
+}
+
+function triggerPullRefresh() {
+  if (pullRefreshState.refreshing) return;
+  pullRefreshState.refreshing = true;
+  renderPullRefresh(PULL_REFRESH_THRESHOLD);
+  saveActiveTab(currentTab);
+  try {
+    const plan = getCurrentPlan();
+    if (plan?.days?.[todayDayName()]) {
+      // keep current tab state stable across reload
+      saveActiveTab(currentTab);
+    }
+  } catch {}
+  try {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistration?.().then((reg) => reg?.update?.()).catch(() => {});
+    }
+  } catch {}
+  setTimeout(() => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('refresh', String(Date.now()));
+    window.location.replace(url.toString());
+  }, 120);
 }
 
 // ---- 制定计划 Tab ----
@@ -1093,20 +1216,43 @@ function renderStats() {
 // ====== 初始化 ======
 function init() {
   renderPlanTab();
-  switchTab('plan');
+  const savedTab = getSavedActiveTab();
+  const plan = getCurrentPlan();
+  const defaultTab = plan && plan.days[todayDayName()] ? 'today' : 'plan';
+  switchTab(['plan', 'today', 'history', 'stats'].includes(savedTab) ? savedTab : defaultTab);
 
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => switchTab(btn.dataset.tab));
   });
-
-  // 如果已有今日打卡，默认打开训练 tab
-  const plan = getCurrentPlan();
-  if (plan) {
-    const today = todayDayName();
-    if (plan.days[today]) {
-      switchTab('today');
-    }
-  }
 }
 
 document.addEventListener('DOMContentLoaded', init);
+
+document.addEventListener('pointerdown', (e) => {
+  if (e.pointerType === 'mouse' && e.buttons !== 1) return;
+  if (isPullRefreshBlocked(e.target)) return;
+  if (window.scrollY > 0) return;
+  beginPullRefresh(e.pointerId, e.clientY);
+}, { passive: true });
+
+document.addEventListener('pointermove', (e) => {
+  if (!pullRefreshState.active || e.pointerId !== pullRefreshState.pointerId) return;
+  if (window.scrollY > 0) {
+    resetPullRefresh();
+    return;
+  }
+  if (e.cancelable) e.preventDefault();
+  updatePullRefresh(e.clientY);
+}, { passive: false });
+
+document.addEventListener('pointerup', (e) => {
+  if (e.pointerId !== pullRefreshState.pointerId) return;
+  endPullRefresh();
+});
+
+document.addEventListener('pointercancel', (e) => {
+  if (e.pointerId !== pullRefreshState.pointerId) return;
+  resetPullRefresh();
+});
+
+window.__sportPlatTriggerRefresh = triggerPullRefresh;

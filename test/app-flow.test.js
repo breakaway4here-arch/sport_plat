@@ -59,6 +59,7 @@ async function resetApp() {
   await waitForAppReady();
 
   app().localStorage.clear();
+  app().sessionStorage.clear();
   try {
     if ('serviceWorker' in app().navigator) {
       const regs = await app().navigator.serviceWorker.getRegistrations();
@@ -115,6 +116,29 @@ function clickCustomItemToggle() {
   const dot = doc().querySelector('.exercise-done[data-customid]');
   assert(dot, 'Missing custom item toggle');
   dot.click();
+}
+
+function dispatchPullPointer(type, clientY) {
+  const target = doc().documentElement;
+  const event = new PointerEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    pointerId: 1,
+    pointerType: 'touch',
+    isPrimary: true,
+    buttons: type === 'pointerup' ? 0 : 1,
+    clientX: 24,
+    clientY,
+  });
+  target.dispatchEvent(event);
+}
+
+async function performPullRefreshGesture() {
+  dispatchPullPointer('pointerdown', 8);
+  await wait(30);
+  dispatchPullPointer('pointermove', 110);
+  await wait(30);
+  dispatchPullPointer('pointerup', 110);
 }
 
 test('generates a weekly plan from selected goals, days, duration, and equipment', async () => {
@@ -375,6 +399,30 @@ test('history displays saved check-ins without depending on removed custom exerc
   const text = doc().querySelector('#tab-history').textContent;
   assert(text.includes('custom_deleted'), 'History should show unknown saved exercise ids');
   assert(text.includes('拉伸'), 'History should show custom items');
+});
+
+test('pulling down from the top shows refresh state and reloads the current tab without clearing data', async () => {
+  await resetApp();
+  makeTodayPlan();
+  app().switchTab('today');
+  app().saveCheckin(app().todayStr(), {
+    planId: 'test_plan',
+    completedExercises: ['e19'],
+    totalDuration: 8,
+    customItems: [{ id: 'extra_1', name: '拉伸', duration: 5, checked: true }],
+    checkedAt: new Date().toISOString(),
+  });
+  app().renderToday();
+
+  const load = waitForFrameLoad();
+  await performPullRefreshGesture();
+  await load;
+  await waitForAppReady();
+
+  assert(doc().querySelector('#tab-today').classList.contains('active'), 'Refresh should preserve the current tab');
+  assert(doc().getElementById('btn-checkin')?.textContent.includes('已选') || doc().getElementById('btn-checkin')?.textContent.includes('完成今日训练'), 'Today tab did not re-render after refresh');
+  assert(app().getTodayCheckin(app().todayStr()), 'Refresh cleared today check-in data');
+  assert(app().getCurrentPlan(), 'Refresh cleared the current plan');
 });
 
 async function run() {
