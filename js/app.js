@@ -66,21 +66,11 @@ function assignGoalsToDays(strengthGoals, hasCardio, hasCore, trainingDayIndices
 
   if (numStrength === 0 && !hasCardio && !hasCore) return assignments;
 
-  // 情况1：力量目标数 <= 训练天数 — 每个力量目标一天
+  // 情况1：力量目标数 <= 训练天数 — 按训练日循环分配，单一目标也覆盖所有选中日期
   if (numStrength <= numDays && numStrength > 0) {
-    const step = Math.max(1, Math.floor(numDays / numStrength));
-    for (let i = 0; i < numStrength; i++) {
-      const dayIdx = trainingDayIndices[Math.min(i * step, trainingDayIndices.length - 1)];
-      assignments[dayIdx] = [strengthGoals[i]];
-    }
-
-    // 剩余天数分配给有氧
-    if (hasCardio) {
-      const usedIndices = new Set(Object.keys(assignments).map(Number));
-      const freeIndices = trainingDayIndices.filter(i => !usedIndices.has(i));
-      for (const idx of freeIndices) {
-        assignments[idx] = ['有氧'];
-      }
+    for (let i = 0; i < numDays; i++) {
+      const dayIdx = trainingDayIndices[i];
+      assignments[dayIdx] = [strengthGoals[i % numStrength]];
     }
   }
 
@@ -674,7 +664,7 @@ function renderPlanTab() {
     setTimeout(() => {
       const plan = generateWeeklyPlan({ goals, selectedDays, durationPerDay, equipment });
       savePlan(plan);
-      renderPlanResult(plan);
+      renderPlanTab();
       // 滚动到计划结果
       document.getElementById('plan-result').scrollIntoView({ behavior: 'smooth' });
     }, 300);
@@ -889,7 +879,12 @@ function renderPlanResult(plan) {
     btn.addEventListener('click', () => {
       const day = btn.dataset.day;
       const currentDuration = parseInt(btn.dataset.duration, 10) || plan.durationPerDay;
-      showAdjustDurationModal(plan, day, currentDuration);
+      showAdjustDurationModal(plan, day, currentDuration, {
+        onSaved: () => {
+          renderPlanTab();
+          document.getElementById('plan-result')?.scrollIntoView({ behavior: 'smooth' });
+        },
+      });
     });
   });
 
@@ -916,7 +911,7 @@ function renderPlanResult(plan) {
         dayOverrides: plan.dayOverrides || {},
       });
       savePlan(newPlan);
-      renderPlanResult(newPlan);
+      renderPlanTab();
       document.getElementById('plan-result').scrollIntoView({ behavior: 'smooth' });
     });
   }

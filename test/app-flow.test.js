@@ -153,6 +153,7 @@ test('generates a weekly plan from selected goals, weekdays, duration, and equip
   assert(plan.daysPerWeek === 3, 'Derived days per week was not saved');
   assert(plan.durationPerDay === 30, 'Selected duration was not saved');
   assert(plan.equipment.includes('自重'), 'Selected equipment was not saved');
+  assert(plan.selectedDays.every(day => plan.days[day]), 'Each selected training day should receive a scheduled workout');
   assert(doc().querySelector('#plan-result .card'), 'Generated plan was not rendered');
 });
 
