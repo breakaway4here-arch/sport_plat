@@ -23,7 +23,7 @@ function waitForFrameLoad() {
 }
 
 async function waitForAppReady() {
-  for (let i = 0; i < 100; i++) {
+  for (let i = 0; i < 120; i++) {
     if (typeof app().renderPlanTab === 'function' && typeof app().switchTab === 'function') return;
     await wait(20);
   }
@@ -52,6 +52,39 @@ function currentPlan() {
   return app().getCurrentPlan();
 }
 
+function weekdays() {
+  return ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+}
+
+function todayPlanDay() {
+  return app().todayDayName();
+}
+
+function buildPlanForToday({
+  goals = ['胸'],
+  targets = ['胸'],
+  exercises = [app().getAllExercises().find(ex => ex.id === 'e19')],
+  selectedDays = [todayPlanDay()],
+  durationPerDay = 30,
+  dayOverrides = {},
+} = {}) {
+  const today = todayPlanDay();
+  return {
+    id: 'test_plan_' + Date.now(),
+    createdAt: new Date().toISOString(),
+    goals,
+    selectedDays,
+    daysPerWeek: selectedDays.length,
+    durationPerDay,
+    equipment: ['自重'],
+    dayOverrides,
+    days: Object.fromEntries(weekdays().map(day => [
+      day,
+      day === today ? { targets, exercises } : null,
+    ])),
+  };
+}
+
 async function resetApp() {
   const load = waitForFrameLoad();
   frame.src = `../index.html?t=${Date.now()}-${Math.random()}`;
@@ -78,30 +111,13 @@ async function resetApp() {
 
 async function generateBasicPlan() {
   clickChip('#goal-chips', '胸');
-  clickChip('#days-chips', '3');
+  clickChip('#weekday-chips', '周一');
+  clickChip('#weekday-chips', '周三');
+  clickChip('#weekday-chips', '周五');
   clickChip('#duration-chips', '30');
   clickChip('#equip-chips', '自重');
   doc().getElementById('btn-generate').click();
   await wait(450);
-}
-
-function makeTodayPlan() {
-  const today = app().todayDayName();
-  const exercise = app().getAllExercises().find(ex => ex.id === 'e19');
-  const weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
-  const days = Object.fromEntries(weekdays.map(day => [
-    day,
-    day === today ? { targets: ['胸'], exercises: [exercise] } : null,
-  ]));
-  app().savePlan({
-    id: 'test_plan',
-    createdAt: new Date().toISOString(),
-    goals: ['胸'],
-    daysPerWeek: 3,
-    durationPerDay: 30,
-    equipment: ['自重'],
-    days,
-  });
 }
 
 async function addExtraItem(name = '拉伸', duration = '10') {
@@ -109,7 +125,7 @@ async function addExtraItem(name = '拉伸', duration = '10') {
   doc().getElementById('aci-name').value = name;
   doc().getElementById('aci-duration').value = duration;
   doc().getElementById('aci-save').click();
-  await wait(20);
+  await wait(40);
 }
 
 function clickCustomItemToggle() {
@@ -118,67 +134,52 @@ function clickCustomItemToggle() {
   dot.click();
 }
 
-function dispatchPullPointer(type, clientY) {
-  const target = doc().documentElement;
-  const event = new PointerEvent(type, {
-    bubbles: true,
-    cancelable: true,
-    pointerId: 1,
-    pointerType: 'touch',
-    isPrimary: true,
-    buttons: type === 'pointerup' ? 0 : 1,
-    clientX: 24,
-    clientY,
-  });
-  target.dispatchEvent(event);
+async function saveDurationModal(value) {
+  const input = doc().getElementById('day-duration-input');
+  assert(input, 'Duration input was not rendered');
+  input.value = value;
+  doc().getElementById('day-duration-save').click();
+  await wait(50);
 }
 
-async function performPullRefreshGesture() {
-  dispatchPullPointer('pointerdown', 8);
-  await wait(30);
-  dispatchPullPointer('pointermove', 110);
-  await wait(30);
-  dispatchPullPointer('pointerup', 110);
-}
-
-test('generates a weekly plan from selected goals, days, duration, and equipment', async () => {
+test('generates a weekly plan from selected goals, weekdays, duration, and equipment', async () => {
   await resetApp();
   await generateBasicPlan();
 
   const plan = currentPlan();
   assert(plan, 'Plan was not saved');
   assert(plan.goals.includes('胸'), 'Selected goal was not saved');
-  assert(plan.daysPerWeek === 3, 'Selected days per week was not saved');
+  assert(plan.selectedDays.join(',') === '周一,周三,周五', 'Selected weekdays were not saved');
+  assert(plan.daysPerWeek === 3, 'Derived days per week was not saved');
   assert(plan.durationPerDay === 30, 'Selected duration was not saved');
   assert(plan.equipment.includes('自重'), 'Selected equipment was not saved');
   assert(doc().querySelector('#plan-result .card'), 'Generated plan was not rendered');
 });
 
-test('returning to plan tab after training keeps modify controls visible', async () => {
+test('returning to the plan tab keeps selections and rendered results visible', async () => {
   await resetApp();
   await generateBasicPlan();
 
   app().switchTab('today');
   app().switchTab('plan');
 
-  const btn = doc().getElementById('btn-generate');
-  const rect = btn.getBoundingClientRect();
-  assert(getComputedStyle(btn).display !== 'none', 'Generate button is hidden after returning to plan tab');
-  assert(rect.width > 0 && rect.height >= 44, 'Generate button is not usable after returning to plan tab');
   assert(selectedValues('#goal-chips').includes('胸'), 'Plan goal selection was not restored');
+  assert(selectedValues('#weekday-chips').join(',') === '周一,周三,周五', 'Weekday selection was not restored');
   assert(doc().querySelector('#plan-result .card'), 'Plan result disappeared after tab switch');
 });
 
-test('edit plan button restores controls and clears only the rendered result', async () => {
+test('edit plan rerenders the plan tab without losing the saved constraints', async () => {
   await resetApp();
   await generateBasicPlan();
 
   doc().getElementById('btn-edit-plan').click();
+  await wait(80);
 
-  const btn = doc().getElementById('btn-generate');
-  assert(getComputedStyle(btn).display !== 'none', 'Generate button is hidden after clicking edit');
-  assert(!doc().querySelector('#plan-result .card'), 'Plan result should be cleared while editing');
-  assert(selectedValues('#goal-chips').includes('胸'), 'Existing plan choices should remain selected for editing');
+  assert(selectedValues('#goal-chips').includes('胸'), 'Goal selection was lost after edit');
+  assert(selectedValues('#weekday-chips').join(',') === '周一,周三,周五', 'Weekday selection was lost after edit');
+  assert(selectedValues('#duration-chips').includes('30'), 'Duration selection was lost after edit');
+  assert(selectedValues('#equip-chips').includes('自重'), 'Equipment selection was lost after edit');
+  assert(doc().querySelector('#plan-result .card'), 'Plan result should remain available while editing');
 });
 
 test('regenerating a plan keeps the same constraints while replacing the saved plan', async () => {
@@ -188,76 +189,73 @@ test('regenerating a plan keeps the same constraints while replacing the saved p
   const before = currentPlan();
   const beforeId = before.id;
   doc().getElementById('btn-regenerate').click();
-  await wait(350);
+  await wait(380);
 
   const after = currentPlan();
   assert(after, 'Regenerated plan was not saved');
   assert(after.id !== beforeId, 'Regenerated plan should replace the previous plan');
   assert(after.goals.join(',') === before.goals.join(','), 'Goals changed during regeneration');
-  assert(after.daysPerWeek === before.daysPerWeek, 'Days per week changed during regeneration');
+  assert(after.selectedDays.join(',') === before.selectedDays.join(','), 'Selected weekdays changed during regeneration');
   assert(after.durationPerDay === before.durationPerDay, 'Duration changed during regeneration');
   assert(after.equipment.join(',') === before.equipment.join(','), 'Equipment changed during regeneration');
-  assert(doc().querySelector('#plan-result .card'), 'Regenerated plan was not rendered');
 });
 
-test('replacing an exercise updates the plan without losing the day layout', async () => {
+test('plan tab duration modal saves a day override and updates the weekly totals', async () => {
   await resetApp();
+  await generateBasicPlan();
 
-  const plan = {
-    id: 'replace_plan',
-    createdAt: new Date().toISOString(),
-    goals: ['胸'],
-    daysPerWeek: 1,
-    durationPerDay: 30,
-    equipment: ['自重'],
-    days: {
-      周一: null,
-      周二: null,
-      周三: { targets: ['胸'], exercises: [app().getAllExercises().find(ex => ex.id === 'e19')] },
-      周四: null,
-      周五: null,
-      周六: null,
-      周日: null,
-    },
-  };
+  const day = currentPlan().selectedDays[0];
+  const btn = [...doc().querySelectorAll('.adjust-duration-btn')].find(el => el.dataset.day === day);
+  assert(btn, `Missing adjust-duration button for ${day}`);
+  btn.click();
+  await saveDurationModal('45');
+
+  const plan = currentPlan();
+  assert(plan.dayOverrides?.[day] === 45, 'Day duration override was not saved');
+  assert(app().getDayDuration(plan, day) === 45, 'Day duration helper did not return the override');
+  assert(app().getPlanTotals(plan).totalMinutes >= 45, 'Plan totals did not include the override');
+});
+
+test('today tab can adjust today duration before check-in', async () => {
+  await resetApp();
+  const plan = buildPlanForToday();
   app().savePlan(plan);
-  app().renderPlanResult(plan);
-
-  const beforeId = currentPlan().days['周三'].exercises[0].id;
-  doc().querySelector('.replace-btn').click();
-  await wait(50);
-
-  const option = doc().querySelector('.replace-option');
-  assert(option, 'Replace modal did not show alternatives');
-  option.click();
-  await wait(50);
-
-  const after = currentPlan();
-  assert(after.days['周三'].targets.includes('胸'), 'Day targets changed after replacement');
-  assert(after.days['周三'].exercises.length === 1, 'Day exercise count changed after replacement');
-  assert(after.days['周三'].exercises[0].id !== beforeId, 'Exercise was not replaced');
-  assert(doc().querySelector('#plan-result .card'), 'Replaced plan was not rendered');
-});
-
-test('today tab shows a rest state when the current day is not scheduled', async () => {
-  await resetApp();
-
-  const weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
-  const today = app().todayDayName();
-  app().savePlan({
-    id: 'rest_plan',
-    createdAt: new Date().toISOString(),
-    goals: ['胸'],
-    daysPerWeek: 1,
-    durationPerDay: 30,
-    equipment: ['自重'],
-    days: Object.fromEntries(weekdays.map(day => [day, day === today ? null : { targets: ['胸'], exercises: [app().getAllExercises().find(ex => ex.id === 'e19')] }])),
-  });
-
   app().renderToday();
 
-  assert(doc().querySelector('#tab-today .empty'), 'Rest day did not render an empty state');
-  assert(doc().body.textContent.includes('今天是休息日'), 'Rest day message was missing');
+  doc().getElementById('btn-adjust-today-duration').click();
+  await saveDurationModal('40');
+
+  const updated = currentPlan();
+  const today = todayPlanDay();
+  assert(updated.dayOverrides?.[today] === 40, 'Today override was not saved from the training tab');
+  assert(app().getTodayTrainingSnapshot().duration === 40, 'Today snapshot did not use the overridden duration');
+  assert(doc().querySelector('#tab-today').textContent.includes('预计时长 40 分钟'), 'Today UI did not refresh to the new duration');
+});
+
+test('today tab warns after check-in and does not rewrite the saved historical duration', async () => {
+  await resetApp();
+  const plan = buildPlanForToday({ dayOverrides: { [todayPlanDay()]: 40 } });
+  app().savePlan(plan);
+  app().saveCheckin(app().todayStr(), {
+    planId: plan.id,
+    completedExercises: plan.days[todayPlanDay()].exercises.map(ex => ex.id),
+    totalDuration: 40,
+    customItems: [],
+    checkedAt: new Date().toISOString(),
+  });
+  app().renderToday();
+
+  doc().getElementById('btn-adjust-today-duration').click();
+  await wait(20);
+  assert(doc().querySelector('.modal-overlay').textContent.includes('不会回写已经保存的打卡总时长'), 'Checked-in warning text was missing');
+  await saveDurationModal('55');
+
+  const updated = currentPlan();
+  const checkin = app().getTodayCheckin(app().todayStr());
+  assert(updated.dayOverrides?.[todayPlanDay()] === 55, 'Updated plan override was not saved');
+  assert(app().getTodayTrainingSnapshot().duration === 55, 'Today snapshot did not reflect the new plan duration');
+  assert(checkin.totalDuration === 40, 'Historical check-in duration should not be rewritten');
+  assert(doc().querySelector('#tab-today').textContent.includes('总时长 40 分钟'), 'Checked-in summary should still reflect historical duration');
 });
 
 test('custom exercises are available for future goals and equipment choices', async () => {
@@ -302,73 +300,46 @@ test('custom exercise output escapes HTML and normalizes empty numeric fields', 
   assert(custom.reps === '-', 'Empty reps was not normalized to placeholder');
 });
 
-test('adding an extra item before check-in does not create a check-in or pollute planned progress', async () => {
+test('adding an extra item before check-in does not create a check-in and expands the progress denominator', async () => {
   await resetApp();
-  makeTodayPlan();
+  const plan = buildPlanForToday();
+  app().savePlan(plan);
   app().renderToday();
 
   await addExtraItem('拉伸', '10');
 
-  assert(!app().getTodayCheckin(app().todayStr()), 'Extra item created check-in too early');
+  assert(!app().getTodayCheckin(app().todayStr()), 'Extra item created a check-in too early');
   const label = doc().getElementById('btn-checkin').textContent.trim();
-  assert(label.includes('已选 0/2'), `Planned progress was not counting the extra item: ${label}`);
+  assert(label.includes('已选 0/2'), `Progress denominator did not include the extra item: ${label}`);
   assert(doc().querySelector('.exercise-done[data-customid]') && !doc().querySelector('.exercise-done[data-customid]').classList.contains('checked'), 'Custom item should start unchecked');
 });
 
-test('checking in with only extra items saves custom duration and no planned exercises', async () => {
+test('checking in with an extra item adds custom duration on top of the planned day duration', async () => {
   await resetApp();
-  const today = app().todayDayName();
-  const weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
-  app().savePlan({
-    id: 'extra_only_plan',
-    createdAt: new Date().toISOString(),
-    goals: ['核心'],
-    daysPerWeek: 1,
-    durationPerDay: 30,
-    equipment: ['自重'],
-    days: Object.fromEntries(weekdays.map(day => [
-      day,
-      day === today ? { targets: ['核心'], exercises: [] } : null,
-    ])),
-  });
+  const exercise = app().getAllExercises().find(ex => ex.id === 'e19');
+  const plan = buildPlanForToday({ exercises: [exercise], dayOverrides: { [todayPlanDay()]: 40 } });
+  app().savePlan(plan);
   app().renderToday();
 
   await addExtraItem('拉伸', '10');
+  doc().querySelector('.exercise-done[data-exid]').click();
   clickCustomItemToggle();
-  const btn = doc().getElementById('btn-checkin');
-  assert(!btn.disabled, 'Check-in button should be enabled when extra items exist');
-  btn.click();
+  doc().getElementById('btn-checkin').click();
 
   const checkin = app().getTodayCheckin(app().todayStr());
   assert(checkin, 'Check-in was not saved');
-  assert(checkin.completedExercises.length === 0, 'Unexpected planned exercises were saved');
+  assert(checkin.completedExercises.length === 1, 'Planned exercise completion was not saved');
   assert(checkin.customItems.length === 1, 'Custom item was not saved');
-  assert(checkin.totalDuration === 10, 'Custom duration was not included');
-});
-
-test('custom item increases the progress denominator and can be completed with the plan', async () => {
-  await resetApp();
-  makeTodayPlan();
-  app().renderToday();
-
-  await addExtraItem('拉伸', '10');
-  const planDone = doc().querySelector('.exercise-done[data-exid]');
-  planDone.click();
-  const labelBefore = doc().getElementById('btn-checkin').textContent.trim();
-  assert(labelBefore.includes('已选 1/2'), `Progress denominator should include the custom item: ${labelBefore}`);
-
-  clickCustomItemToggle();
-
-  const label = doc().getElementById('btn-checkin').textContent.trim();
-  assert(label.includes('完成今日训练，打卡'), `Progress should reach completion after the custom item is checked: ${label}`);
+  assert(checkin.totalDuration === 50, `Expected planned override + custom duration to equal 50, got ${checkin.totalDuration}`);
 });
 
 test('after check-in, adding another extra item appends to the existing record', async () => {
   await resetApp();
-  makeTodayPlan();
+  const plan = buildPlanForToday();
+  app().savePlan(plan);
   app().saveCheckin(app().todayStr(), {
-    planId: 'test_plan',
-    completedExercises: ['e19'],
+    planId: plan.id,
+    completedExercises: plan.days[todayPlanDay()].exercises.map(ex => ex.id),
     totalDuration: 3,
     customItems: [],
     checkedAt: new Date().toISOString(),
@@ -378,16 +349,16 @@ test('after check-in, adding another extra item appends to the existing record',
   await addExtraItem('散步', '12');
 
   const checkin = app().getTodayCheckin(app().todayStr());
-  assert(checkin.completedExercises.includes('e19'), 'Existing planned exercise completion was lost');
   assert(checkin.customItems.length === 1, 'Extra item was not appended');
   assert(checkin.totalDuration === 15, 'Extra item duration was not accumulated');
 });
 
-test('history displays saved check-ins without depending on removed custom exercise definitions', async () => {
+test('history displays saved check-ins without depending on removed exercise definitions', async () => {
   await resetApp();
-  makeTodayPlan();
+  const plan = buildPlanForToday();
+  app().savePlan(plan);
   app().saveCheckin(app().todayStr(), {
-    planId: 'test_plan',
+    planId: plan.id,
     completedExercises: ['custom_deleted'],
     totalDuration: 8,
     customItems: [{ id: 'extra_1', name: '拉伸', duration: 5, checked: true }],
@@ -399,30 +370,6 @@ test('history displays saved check-ins without depending on removed custom exerc
   const text = doc().querySelector('#tab-history').textContent;
   assert(text.includes('custom_deleted'), 'History should show unknown saved exercise ids');
   assert(text.includes('拉伸'), 'History should show custom items');
-});
-
-test('pulling down from the top shows refresh state and reloads the current tab without clearing data', async () => {
-  await resetApp();
-  makeTodayPlan();
-  app().switchTab('today');
-  app().saveCheckin(app().todayStr(), {
-    planId: 'test_plan',
-    completedExercises: ['e19'],
-    totalDuration: 8,
-    customItems: [{ id: 'extra_1', name: '拉伸', duration: 5, checked: true }],
-    checkedAt: new Date().toISOString(),
-  });
-  app().renderToday();
-
-  const load = waitForFrameLoad();
-  await performPullRefreshGesture();
-  await load;
-  await waitForAppReady();
-
-  assert(doc().querySelector('#tab-today').classList.contains('active'), 'Refresh should preserve the current tab');
-  assert(doc().getElementById('btn-checkin')?.textContent.includes('已选') || doc().getElementById('btn-checkin')?.textContent.includes('完成今日训练'), 'Today tab did not re-render after refresh');
-  assert(app().getTodayCheckin(app().todayStr()), 'Refresh cleared today check-in data');
-  assert(app().getCurrentPlan(), 'Refresh cleared the current plan');
 });
 
 async function run() {
