@@ -42,7 +42,9 @@
   <script src="js/app.js"></script>
   <script>
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('sw.js');
+      navigator.serviceWorker.register('sw.js?v=20260529-2').then((registration) => {
+        registration.update();
+      }).catch(() => {});
     }
   </script>
 </body>
