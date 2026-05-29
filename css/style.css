@@ -53,30 +53,27 @@ body {
 /* Pull to refresh */
 .pull-refresh {
   position: fixed;
-  top: 8px;
-  left: 50%;
-  transform: translate(-50%, -120%);
-  width: calc(100% - 24px);
-  max-width: 456px;
-  min-height: 42px;
-  background: rgba(255, 255, 255, 0.97);
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  top: 0;
+  left: 0;
+  right: 0;
+  max-width: 480px;
+  margin: 0 auto;
+  height: 48px;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
   color: var(--text-secondary);
-  font-size: 0.82rem;
-  font-weight: 700;
+  font-size: 0.8rem;
+  font-weight: 600;
   z-index: 110;
-  opacity: 0;
+  transform: translateY(-100%);
   pointer-events: none;
-  transition: transform 0.18s ease, opacity 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+  transition: transform 0.15s ease, color 0.15s ease;
 }
-.pull-refresh.visible { opacity: 1; }
-.pull-refresh.armed { color: var(--primary); border-color: var(--primary); }
-.pull-refresh.refreshing { color: var(--primary); border-color: var(--primary); }
+.pull-refresh.visible { transform: translateY(0); }
+.pull-refresh.armed { color: var(--primary); }
+.pull-refresh.refreshing { color: var(--primary); transform: translateY(0); }
 .pull-refresh-icon {
   width: 18px;
   height: 18px;

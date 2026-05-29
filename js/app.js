@@ -388,14 +388,15 @@ function renderPullRefresh(distance = 0) {
   if (!pullRefreshEl) return;
   const clamped = Math.max(0, Math.min(distance, PULL_REFRESH_MAX));
   const visible = clamped > 0 || pullRefreshState.refreshing;
-  const progress = pullRefreshState.refreshing ? PULL_REFRESH_THRESHOLD : clamped;
-  const translateY = pullRefreshState.refreshing
-    ? 0
-    : -120 + Math.min(progress, PULL_REFRESH_THRESHOLD) / PULL_REFRESH_THRESHOLD * 120;
+  if (pullRefreshState.refreshing) {
+    pullRefreshEl.style.transform = 'translateY(0)';
+  } else {
+    const pct = -100 + Math.min(clamped, PULL_REFRESH_THRESHOLD) / PULL_REFRESH_THRESHOLD * 100;
+    pullRefreshEl.style.transform = `translateY(${pct}%)`;
+  }
   pullRefreshEl.classList.toggle('visible', visible);
   pullRefreshEl.classList.toggle('armed', pullRefreshState.armed && !pullRefreshState.refreshing);
   pullRefreshEl.classList.toggle('refreshing', pullRefreshState.refreshing);
-  pullRefreshEl.style.transform = `translate(-50%, ${translateY}%)`;
   pullRefreshEl.setAttribute('aria-hidden', visible ? 'false' : 'true');
   if (pullRefreshIconEl) pullRefreshIconEl.textContent = pullRefreshState.refreshing ? '⟳' : '↓';
   if (pullRefreshTextEl) pullRefreshTextEl.textContent = getPullRefreshText();
@@ -446,24 +447,20 @@ function triggerPullRefresh() {
   if (pullRefreshState.refreshing) return;
   pullRefreshState.refreshing = true;
   renderPullRefresh(PULL_REFRESH_THRESHOLD);
-  saveActiveTab(currentTab);
-  try {
-    const plan = getCurrentPlan();
-    if (plan?.days?.[todayDayName()]) {
-      // keep current tab state stable across reload
-      saveActiveTab(currentTab);
-    }
-  } catch {}
+
+  // Update SW in background for next visit
   try {
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.getRegistration?.().then((reg) => reg?.update?.()).catch(() => {});
     }
   } catch {}
+
+  // Soft refresh: re-render from localStorage without page reload
   setTimeout(() => {
-    const url = new URL(window.location.href);
-    url.searchParams.set('refresh', String(Date.now()));
-    window.location.replace(url.toString());
-  }, 120);
+    switchTab(currentTab);
+    pullRefreshState.refreshing = false;
+    resetPullRefresh();
+  }, 300);
 }
 
 // ---- 制定计划 Tab ----
