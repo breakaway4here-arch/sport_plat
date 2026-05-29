@@ -1,6 +1,7 @@
 // ====== sport_plat - 居家训练计划 ======
 
 const STORAGE_KEY = 'sport_plat';
+const pendingCustomItemsByDate = {};
 
 function loadData() {
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -10,6 +11,16 @@ function loadData() {
 
 function saveData(data) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+}
+
+function escapeHTML(value) {
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  })[ch]);
 }
 
 // ====== 计划生成引擎 ======
@@ -41,9 +52,8 @@ function assignGoalsToDays(strengthGoals, hasCardio, hasCore, trainingDayIndices
 
   if (numStrength === 0 && !hasCardio && !hasCore) return assignments;
 
-  // 情况1：力量目标数 <= 训练天数 — 每个力量目标一天，剩余给有氧
+  // 情况1：力量目标数 <= 训练天数 — 每个力量目标一天
   if (numStrength <= numDays && numStrength > 0) {
-    // 将力量目标分配到间隔最大的日期
     const step = Math.max(1, Math.floor(numDays / numStrength));
     for (let i = 0; i < numStrength; i++) {
       const dayIdx = trainingDayIndices[Math.min(i * step, trainingDayIndices.length - 1)];
@@ -53,20 +63,43 @@ function assignGoalsToDays(strengthGoals, hasCardio, hasCore, trainingDayIndices
     // 剩余天数分配给有氧
     if (hasCardio) {
       const usedIndices = new Set(Object.keys(assignments).map(Number));
-      for (const idx of trainingDayIndices) {
-        if (!usedIndices.has(idx) && (!assignments[idx] || assignments[idx].length === 0)) {
-          assignments[idx] = ['有氧'];
-        }
+      const freeIndices = trainingDayIndices.filter(i => !usedIndices.has(i));
+      for (const idx of freeIndices) {
+        assignments[idx] = ['有氧'];
       }
     }
   }
 
   // 情况2：力量目标数 > 训练天数 — 每天组合不同部位
-  // 关联规则：腿+核心、背+手臂、胸+肩、全身
   if (numStrength > numDays && numStrength > 0) {
     const combos = buildCombos(strengthGoals, numDays);
     for (let i = 0; i < numDays; i++) {
       assignments[trainingDayIndices[i]] = combos[i] || [strengthGoals[i % numStrength]];
+    }
+  }
+
+  // 有氧穿插：和力量日共存，选1-2个非纯有氧日附加有氧
+  if (hasCardio) {
+    const existingCardioIndices = Object.entries(assignments)
+      .filter(([, targets]) => targets.length === 1 && targets[0] === '有氧')
+      .map(([idx]) => Number(idx));
+    const pureCardioCount = existingCardioIndices.length;
+
+    // 如果还没有足够的纯有氧日，选1-2个力量日附加有氧
+    const needMixedCardio = pureCardioCount < 2;
+    if (needMixedCardio) {
+      const strengthIndices = trainingDayIndices.filter(i =>
+        assignments[i] && !(assignments[i].length === 1 && assignments[i][0] === '有氧')
+      );
+      // 选最多2个力量日附加有氧，优先选目标少的
+      strengthIndices.sort((a, b) => assignments[a].length - assignments[b].length);
+      const mixCount = Math.min(2 - pureCardioCount, strengthIndices.length);
+      for (let i = 0; i < mixCount; i++) {
+        const idx = strengthIndices[i];
+        if (!assignments[idx].includes('有氧')) {
+          assignments[idx].push('有氧');
+        }
+      }
     }
   }
 
@@ -177,7 +210,7 @@ function selectExercisesForDay({ targets, durationPerDay, equipment }) {
 
   // 如果还有时间，补充1-2个核心动作
   if (totalDuration < durationBudget && !targets.includes('核心')) {
-    const corePool = EXERCISES.filter(e => e.target === '核心' && eqWithBodyweight.includes(e.equipment));
+    const corePool = getAllExercises().filter(e => e.target === '核心' && eqWithBodyweight.includes(e.equipment));
     const shuffled = [...corePool].sort(() => Math.random() - 0.5);
     for (const ex of shuffled) {
       if (totalDuration + ex.duration > durationBudget) break;
@@ -228,7 +261,7 @@ function replaceExercise(plan, dayName, oldExerciseId, newExerciseId) {
   if (!day) return newPlan;
   const idx = day.exercises.findIndex(e => e.id === oldExerciseId);
   if (idx === -1) return newPlan;
-  const newEx = EXERCISES.find(e => e.id === newExerciseId);
+  const newEx = getAllExercises().find(e => e.id === newExerciseId);
   if (!newEx) return newPlan;
   day.exercises[idx] = newEx;
   return newPlan;
@@ -304,6 +337,7 @@ function loadExerciseImage(exercise, imgEl) {
 function switchTab(tabName) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tabName));
   document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === 'tab-' + tabName));
+  if (tabName === 'plan') renderPlanTab();
   if (tabName === 'today') renderToday();
   if (tabName === 'history') renderHistory();
   if (tabName === 'stats') renderStats();
@@ -316,35 +350,39 @@ function renderPlanTab() {
 
   el.innerHTML = `
     <div class="card">
-      <div class="card-title">🎯 训练目标（可多选）</div>
+      <div class="card-title">训练目标（可多选）</div>
       <div class="chip-group" id="goal-chips">
-        ${ALL_TARGETS.map(t => `<span class="chip" data-val="${t}">${t}</span>`).join('')}
+        ${getAllTargets().map(t => `<span class="chip" data-val="${t}">${t}</span>`).join('')}
       </div>
     </div>
 
     <div class="card">
-      <div class="card-title">📅 每周训练天数</div>
+      <div class="card-title">每周训练天数</div>
       <div class="chip-group" id="days-chips">
         ${[2,3,4,5,6,7].map(d => `<span class="chip" data-val="${d}">${d} 天/周</span>`).join('')}
       </div>
     </div>
 
     <div class="card">
-      <div class="card-title">⏱️ 每次训练时长</div>
+      <div class="card-title">每次训练时长</div>
       <div class="chip-group" id="duration-chips">
         ${[15,20,30,45,60].map(d => `<span class="chip" data-val="${d}">${d} 分钟</span>`).join('')}
       </div>
     </div>
 
     <div class="card">
-      <div class="card-title">🔧 可用器械（可多选）</div>
+      <div class="card-title">可用器械（可多选）</div>
       <div class="chip-group" id="equip-chips">
-        ${ALL_EQUIPMENT.map(t => `<span class="chip" data-val="${t}">${t}</span>`).join('')}
+        ${getAllEquipment().map(t => `<span class="chip" data-val="${t}">${t}</span>`).join('')}
       </div>
     </div>
 
-    <button class="btn btn-primary" id="btn-generate">✨ 生成训练计划</button>
+    <div class="primary-actions">
+      <button class="btn btn-primary" id="btn-generate">生成训练计划</button>
+      <button class="btn btn-outline" id="btn-custom-ex">自定义动作</button>
+    </div>
 
+    <div id="custom-ex-list" class="custom-ex-list"></div>
     <div id="plan-result"></div>
   `;
 
@@ -373,7 +411,7 @@ function renderPlanTab() {
 
     // 显示 loading
     const btn = document.getElementById('btn-generate');
-    btn.textContent = '⏳ 生成中...';
+    btn.textContent = '生成中...';
     btn.disabled = true;
 
     // 收起选择区
@@ -389,6 +427,13 @@ function renderPlanTab() {
       document.getElementById('plan-result').scrollIntoView({ behavior: 'smooth' });
     }, 300);
   });
+
+  // 自定义动作
+  const cxBtn = document.getElementById('btn-custom-ex');
+  if (cxBtn) {
+    cxBtn.addEventListener('click', () => showCustomExModal());
+    renderCustomExList();
+  }
 }
 
 function bindChipEvents(selector) {
@@ -408,6 +453,107 @@ function getSelectedChips(selector) {
   return Array.from(document.querySelectorAll(`${selector} .chip.selected`)).map(c => c.dataset.val);
 }
 
+
+// ====== 自定义动作 UI ======
+
+function showCustomExModal() {
+  document.querySelector(".modal-overlay")?.remove();
+  const targets = getAllTargets();
+  const equipment = getAllEquipment();
+
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:420px;">
+      <div class="modal-header">
+        <span>添加自定义动作</span>
+        <button class="modal-close">&times;</button>
+      </div>
+      <div style="padding:8px 0;">
+        <label class="field-label">动作名称</label>
+        <input class="field-input" id="cx-name" placeholder="例如：跑步机爬坡、引体向上">
+        <label class="field-label">目标部位</label>
+        <div class="chip-group" id="cx-target">${targets.map(t => `<span class="chip" data-val="${t}">${t}</span>`).join("")}</div>
+        <label class="field-label">使用器械</label>
+        <div class="chip-group" id="cx-equip">${equipment.map(t => `<span class="chip" data-val="${t}">${t}</span>`).join("")}</div>
+        <div style="display:flex;gap:8px;">
+          <div style="flex:1;"><label class="field-label">时长</label><input class="field-input" id="cx-duration" type="number" min="1" max="60" value="5"></div>
+          <div style="flex:1;"><label class="field-label">组数</label><input class="field-input" id="cx-sets" type="number" min="1" max="10" value="3"></div>
+          <div style="flex:1;"><label class="field-label">次数</label><input class="field-input" id="cx-reps" placeholder="12-15"></div>
+        </div>
+        <label class="field-label">描述（可选）</label>
+        <input class="field-input" id="cx-desc" placeholder="动作要点">
+      </div>
+      <button class="btn btn-primary" id="cx-save" style="width:100%;">保存</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  overlay.querySelector(".modal-close").addEventListener("click", () => overlay.remove());
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+
+  // chip toggle
+  const bindCx = (sel) => {
+    overlay.querySelectorAll(sel + " .chip").forEach(c => {
+      c.addEventListener("click", () => {
+        overlay.querySelectorAll(sel + " .chip").forEach(x => x.classList.remove("selected"));
+        c.classList.add("selected");
+      });
+    });
+  };
+  bindCx("#cx-target");
+  bindCx("#cx-equip");
+
+  overlay.querySelector("#cx-save").addEventListener("click", () => {
+    const name = overlay.querySelector("#cx-name").value.trim();
+    const target = overlay.querySelector("#cx-target .chip.selected")?.dataset.val;
+    const equip = overlay.querySelector("#cx-equip .chip.selected")?.dataset.val;
+    const duration = overlay.querySelector("#cx-duration").value;
+    const sets = overlay.querySelector("#cx-sets").value;
+    const reps = overlay.querySelector("#cx-reps").value.trim();
+    const desc = overlay.querySelector("#cx-desc").value.trim();
+    if (!name) { alert("请输入动作名称"); return; }
+    if (!target) { alert("请选择目标部位"); return; }
+    if (!equip) { alert("请选择器械"); return; }
+    addCustomExercise({ name, target, equipment: equip, duration, sets, reps, desc });
+    overlay.remove();
+    renderCustomExList();
+    renderPlanTab();
+  });
+}
+
+function renderCustomExList() {
+  const el = document.getElementById("custom-ex-list");
+  if (!el) return;
+  const list = loadCustomExercises();
+  if (list.length === 0) { el.innerHTML = ""; return; }
+  el.innerHTML = `
+    <div class="card-title custom-title">我的自定义动作</div>
+    ${list.map(ex => `
+      <div class="exercise-item custom-exercise-item">
+        <div class="exercise-info">
+          <div class="ex-name"><span class="target-tag ${targetTagClass(ex.target)}">${escapeHTML(ex.target)}</span> ${escapeHTML(ex.name)}</div>
+          <div class="ex-meta">
+            <span>${escapeHTML(ex.sets)}组 × ${escapeHTML(ex.reps)}</span>
+            <span>${escapeHTML(ex.equipment)}</span>
+            <span>约${escapeHTML(ex.duration)}分钟</span>
+          </div>
+          ${ex.desc ? `<div class="ex-desc">${escapeHTML(ex.desc)}</div>` : ""}
+        </div>
+        <button class="btn btn-sm btn-ghost cx-del-btn" data-id="${escapeHTML(ex.id)}">删除</button>
+      </div>
+    `).join("")}
+  `;
+  el.querySelectorAll(".cx-del-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if (confirm("删除这个自定义动作？")) {
+        removeCustomExercise(btn.dataset.id);
+        renderCustomExList();
+        renderPlanTab();
+      }
+    });
+  });
+}
 function restoreChipSelection(selector, values) {
   document.querySelectorAll(`${selector} .chip`).forEach(c => {
     if (values.map(String).includes(c.dataset.val)) c.classList.add('selected');
@@ -419,10 +565,10 @@ function renderPlanResult(plan) {
   if (!el) return;
   el.innerHTML = `
     <div class="card" style="margin-top:16px;">
-      <div class="card-title">📋 本周训练计划</div>
+      <div class="card-title">本周训练计划</div>
       <div class="plan-action-bar">
-        <button class="btn btn-sm btn-ghost" id="btn-edit-plan">✏️ 修改条件</button>
-        <button class="btn btn-sm btn-ghost" id="btn-regenerate">🔄 重新生成</button>
+        <button class="btn btn-sm btn-ghost" id="btn-edit-plan">修改条件</button>
+        <button class="btn btn-sm btn-ghost" id="btn-regenerate">重新生成</button>
       </div>
       ${WEEKDAYS.map(day => {
         const d = plan.days[day];
@@ -456,7 +602,7 @@ function renderPlanResult(plan) {
   // 加载图片
   el.querySelectorAll('.exercise-img').forEach(imgEl => {
     const exId = imgEl.dataset.exid;
-    const ex = EXERCISES.find(e => e.id === exId);
+    const ex = getAllExercises().find(e => e.id === exId);
     if (ex) loadExerciseImage(ex, imgEl);
   });
 
@@ -478,7 +624,7 @@ function renderPlanResult(plan) {
       cards.forEach(c => c.style.display = '');
       document.getElementById('btn-generate').style.display = '';
       document.getElementById('btn-generate').disabled = false;
-      document.getElementById('btn-generate').textContent = '✨ 生成训练计划';
+      document.getElementById('btn-generate').textContent = '生成训练计划';
       el.innerHTML = '';
       el.parentElement.scrollIntoView({ behavior: 'smooth' });
     });
@@ -508,7 +654,7 @@ function showReplaceModal(plan, dayName, oldExId) {
   if (!oldEx) return;
 
   const targets = plan.days[dayName].targets;
-  const alternatives = EXERCISES.filter(e =>
+  const alternatives = getAllExercises().filter(e =>
     targets.includes(e.target) &&
     plan.equipment.concat('自重').includes(e.equipment) &&
     e.id !== oldExId
@@ -551,7 +697,7 @@ function showReplaceModal(plan, dayName, oldExId) {
 
   // 加载图片
   overlay.querySelectorAll('.exercise-img').forEach(imgEl => {
-    const ex = EXERCISES.find(e => e.id === imgEl.dataset.exid);
+    const ex = getAllExercises().find(e => e.id === imgEl.dataset.exid);
     if (ex) loadExerciseImage(ex, imgEl);
   });
 
@@ -590,6 +736,8 @@ function renderToday() {
   const totalExercises = dayPlan.exercises.length;
   const completedCount = completedIds.length;
   const progress = totalExercises > 0 ? Math.round(completedCount / totalExercises * 100) : 0;
+  const customItems = checkin?.customItems || pendingCustomItemsByDate[todayStrVal] || [];
+  const canCheckin = completedCount > 0 || customItems.length > 0;
 
   el.innerHTML = `
     <div class="card">
@@ -622,20 +770,33 @@ function renderToday() {
       `;
     }).join('')}
 
-    <button class="btn ${completedCount === totalExercises ? 'btn-success' : 'btn-primary'}" id="btn-checkin" ${completedCount === 0 ? 'disabled' : ''}>
-      ${completedCount === totalExercises ? '✅ 完成今日训练，打卡！' : `已选 ${completedCount}/${totalExercises} 项`}
+    ${customItems.map((ci) => `
+        <div class="card exercise-item" style="align-items:center;">
+          <div class="exercise-img"><div class="custom-item-icon">+</div></div>
+          <div class="exercise-info">
+            <div class="ex-name">${escapeHTML(ci.name)}</div>
+            <div class="ex-meta"><span>额外项目</span><span>约${escapeHTML(ci.duration || 0)}分钟</span></div>
+          </div>
+          <div class="exercise-done checked">✓</div>
+        </div>
+      `).join('')}
+
+    <button class="btn btn-outline btn-add-extra" id="btn-add-custom-item">添加额外项目</button>
+
+    <button class="btn ${completedCount === totalExercises ? 'btn-success' : 'btn-primary'}" id="btn-checkin" ${canCheckin ? '' : 'disabled'}>
+      ${completedCount === totalExercises ? '完成今日训练，打卡' : `已选 ${completedCount}/${totalExercises} 项`}
     </button>
     ${checkin ? `<div style="text-align:center;margin-top:10px;color:var(--success);font-size:0.85rem;font-weight:600;">✓ 今日已打卡 · ${checkin.totalDuration || 0}分钟</div>` : ''}
   `;
 
   // 加载图片
   el.querySelectorAll('.exercise-img').forEach(imgEl => {
-    const ex = EXERCISES.find(e => e.id === imgEl.dataset.exid);
+    const ex = getAllExercises().find(e => e.id === imgEl.dataset.exid);
     if (ex) loadExerciseImage(ex, imgEl);
   });
 
   // 点击切换完成状态
-  el.querySelectorAll('.exercise-done').forEach(dot => {
+  el.querySelectorAll('.exercise-done[data-exid]').forEach(dot => {
     const exId = dot.dataset.exid;
     if (checkin && checkin.completedExercises.includes(exId)) {
       // 已打卡的不能取消（简化逻辑：打卡后不可撤销今日）
@@ -650,28 +811,80 @@ function renderToday() {
   });
 
   function updateCheckinButton() {
-    const checked = el.querySelectorAll('.exercise-done.checked').length;
+    const checked = el.querySelectorAll('.exercise-done[data-exid].checked').length;
+    const pendingCustomCount = (checkin?.customItems || pendingCustomItemsByDate[todayStrVal] || []).length;
     const btn = document.getElementById('btn-checkin');
-    btn.textContent = checked === totalExercises ? '✅ 完成今日训练，打卡！' : `已选 ${checked}/${totalExercises} 项`;
+    btn.textContent = checked === totalExercises ? '完成今日训练，打卡' : `已选 ${checked}/${totalExercises} 项`;
     btn.className = `btn ${checked === totalExercises ? 'btn-primary' : 'btn-outline'}`;
-    btn.disabled = checked === 0;
-    btn.style.opacity = checked === 0 ? '0.5' : '1';
+    btn.disabled = checked === 0 && pendingCustomCount === 0;
+    btn.style.opacity = btn.disabled ? '0.5' : '1';
   }
 
   // 打卡按钮
   const checkinBtn = document.getElementById('btn-checkin');
   if (checkinBtn && !checkin) {
     checkinBtn.addEventListener('click', () => {
-      const checked = Array.from(el.querySelectorAll('.exercise-done.checked')).map(d => d.dataset.exid);
-      if (checked.length === 0) return;
+      const checked = Array.from(el.querySelectorAll('.exercise-done[data-exid].checked')).map(d => d.dataset.exid);
+      const customItems = pendingCustomItemsByDate[todayStrVal] || [];
+      if (checked.length === 0 && customItems.length === 0) return;
       const totalDuration = dayPlan.exercises.filter(e => checked.includes(e.id)).reduce((s, e) => s + e.duration, 0);
+      const customDuration = customItems.reduce((s, ci) => s + (ci.duration || 0), 0);
       saveCheckin(todayStrVal, {
         planId: plan.id,
         completedExercises: checked,
-        totalDuration,
+        totalDuration: totalDuration + customDuration,
+        customItems,
         checkedAt: new Date().toISOString(),
       });
+      delete pendingCustomItemsByDate[todayStrVal];
       renderToday();
+    });
+  }
+
+  // 自定义项目按钮
+  const addCustomBtn = document.getElementById('btn-add-custom-item');
+  if (addCustomBtn) {
+    addCustomBtn.addEventListener('click', () => {
+      document.querySelector('.modal-overlay')?.remove();
+      const overlay = document.createElement('div');
+      overlay.className = 'modal-overlay';
+      overlay.innerHTML = `
+        <div class="modal" style="max-width:360px;">
+          <div class="modal-header">
+            <span>添加额外项目</span>
+            <button class="modal-close">&times;</button>
+          </div>
+          <div style="padding:8px 0;">
+            <label class="field-label">项目名称</label>
+            <input class="field-input" id="aci-name" placeholder="例如：跑步机30分钟、拉伸">
+            <label class="field-label">时长（分钟）</label>
+            <input class="field-input" id="aci-duration" type="number" min="1" max="120" value="20">
+          </div>
+          <button class="btn btn-primary" id="aci-save" style="width:100%;">添加项目</button>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+      overlay.querySelector('.modal-close').addEventListener('click', () => overlay.remove());
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+      overlay.querySelector('#aci-save').addEventListener('click', () => {
+        const name = overlay.querySelector('#aci-name').value.trim();
+        const duration = Math.max(1, Math.min(120, parseInt(overlay.querySelector('#aci-duration').value, 10) || 20));
+        if (!name) { alert('请输入项目名称'); return; }
+        const existingCheckin = getTodayCheckin(todayStrVal);
+        if (existingCheckin) {
+          const customItems = [...(existingCheckin.customItems || []), { name, duration }];
+          saveCheckin(todayStrVal, {
+            ...existingCheckin,
+            totalDuration: (existingCheckin.totalDuration || 0) + duration,
+            customItems,
+            checkedAt: new Date().toISOString(),
+          });
+        } else {
+          pendingCustomItemsByDate[todayStrVal] = [...(pendingCustomItemsByDate[todayStrVal] || []), { name, duration }];
+        }
+        overlay.remove();
+        renderToday();
+      });
     });
   }
 }
@@ -730,7 +943,7 @@ function renderHistory() {
         sortedDates.map(dateStr => {
           const c = monthCheckins[dateStr];
           const exNames = c.completedExercises.map(eid => {
-            const ex = EXERCISES.find(e => e.id === eid);
+            const ex = getAllExercises().find(e => e.id === eid);
             return ex ? ex.name : eid;
           }).join('、');
           const d = new Date(dateStr);
@@ -784,7 +997,7 @@ function renderStats() {
   for (const dateStr of monthDates) {
     const c = monthCheckins[dateStr];
     for (const eid of c.completedExercises) {
-      const ex = EXERCISES.find(e => e.id === eid);
+      const ex = getAllExercises().find(e => e.id === eid);
       if (ex) {
         targetCount[ex.target] = (targetCount[ex.target] || 0) + 1;
       }

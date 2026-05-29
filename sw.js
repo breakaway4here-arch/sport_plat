@@ -1,11 +1,11 @@
-const CACHE_NAME = 'sport_plat_v1';
+const CACHE_NAME = 'sport_plat_v3';
 const ASSETS = [
-  '/sport_plat/',
-  '/sport_plat/index.html',
-  '/sport_plat/css/style.css',
-  '/sport_plat/js/exercises.js',
-  '/sport_plat/js/app.js',
-  '/sport_plat/manifest.json',
+  './',
+  './index.html',
+  './css/style.css',
+  './js/exercises.js',
+  './js/app.js',
+  './manifest.json',
 ];
 
 self.addEventListener('install', (e) => {
@@ -27,17 +27,17 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   // 不缓存 wger API 请求
   if (e.request.url.includes('wger.de')) return;
+  if (e.request.method !== 'GET') return;
 
   e.respondWith(
-    caches.match(e.request).then((cached) => {
-      const fetchPromise = fetch(e.request).then((res) => {
-        if (res.ok && e.request.method === 'GET') {
+    fetch(e.request)
+      .then((res) => {
+        if (res.ok) {
           const clone = res.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(e.request, clone));
         }
         return res;
-      });
-      return cached || fetchPromise;
-    })
+      })
+      .catch(() => caches.match(e.request))
   );
 });

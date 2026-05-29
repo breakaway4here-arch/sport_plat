@@ -82,21 +82,68 @@ const EXERCISES = [
   { id:'e62', name:'哑铃农夫行走', target:'全身', equipment:'哑铃', duration:3, sets:3, reps:'30步', desc:'双手提重哑铃于体侧，核心收紧，自然行走保持身体不侧倾。', wgerTerm:'farmer walk' },
 ];
 
-// 按目标部位筛选
+// ====== 自定义动作库 ======
+
+const CUSTOM_EX_KEY = 'sport_plat_custom_ex';
+
+function loadCustomExercises() {
+  try {
+    const raw = localStorage.getItem(CUSTOM_EX_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch { return []; }
+}
+
+function saveCustomExercises(list) {
+  localStorage.setItem(CUSTOM_EX_KEY, JSON.stringify(list));
+}
+
+function addCustomExercise({ name, target, equipment, duration, sets, reps, desc }) {
+  const list = loadCustomExercises();
+  const ex = {
+    id: 'custom_' + Date.now(),
+    name,
+    target,
+    equipment,
+    duration: Math.max(1, Math.min(60, Number(duration) || 5)),
+    sets: Math.max(1, Math.min(10, Number(sets) || 1)),
+    reps: reps || '-',
+    desc: desc || '',
+    custom: true,
+  };
+  list.push(ex);
+  saveCustomExercises(list);
+  return ex;
+}
+
+function removeCustomExercise(id) {
+  const list = loadCustomExercises().filter(e => e.id !== id);
+  saveCustomExercises(list);
+}
+
+// 合并内置 + 自定义动作
+function getAllExercises() {
+  return [...EXERCISES, ...loadCustomExercises()];
+}
+
+// 按目标部位筛选（使用合并后的列表）
 function filterByTarget(targets) {
-  if (!targets || targets.length === 0) return EXERCISES;
-  return EXERCISES.filter(e => targets.includes(e.target));
+  const all = getAllExercises();
+  if (!targets || targets.length === 0) return all;
+  return all.filter(e => targets.includes(e.target));
 }
 
 // 按器械筛选
 function filterByEquipment(equipment) {
-  if (!equipment || equipment.length === 0) return EXERCISES;
-  return EXERCISES.filter(e => equipment.includes(e.equipment));
+  const all = getAllExercises();
+  if (!equipment || equipment.length === 0) return all;
+  return all.filter(e => equipment.includes(e.equipment));
 }
 
 // 按目标和器械同时筛选
 function filterExercises({ targets, equipment }) {
-  let result = EXERCISES;
+  const all = getAllExercises();
+  let result = all;
   if (targets && targets.length > 0) {
     result = result.filter(e => targets.includes(e.target));
   }
@@ -106,11 +153,15 @@ function filterExercises({ targets, equipment }) {
   return result;
 }
 
-// 获取唯一部位列表
-const ALL_TARGETS = [...new Set(EXERCISES.map(e => e.target))];
+// 获取唯一部位列表（含自定义）
+function getAllTargets() {
+  return [...new Set(getAllExercises().map(e => e.target))];
+}
 
-// 获取唯一器械列表
-const ALL_EQUIPMENT = [...new Set(EXERCISES.map(e => e.equipment))];
+// 获取唯一器械列表（含自定义）
+function getAllEquipment() {
+  return [...new Set(getAllExercises().map(e => e.equipment))];
+}
 
 // ====== 动作图标（按部位配色） ======
 
