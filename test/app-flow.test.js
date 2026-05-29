@@ -111,6 +111,12 @@ async function addExtraItem(name = '拉伸', duration = '10') {
   await wait(20);
 }
 
+function clickCustomItemToggle() {
+  const dot = doc().querySelector('.exercise-done[data-customid]');
+  assert(dot, 'Missing custom item toggle');
+  dot.click();
+}
+
 test('generates a weekly plan from selected goals, days, duration, and equipment', async () => {
   await resetApp();
   await generateBasicPlan();
@@ -281,15 +287,30 @@ test('adding an extra item before check-in does not create a check-in or pollute
 
   assert(!app().getTodayCheckin(app().todayStr()), 'Extra item created check-in too early');
   const label = doc().getElementById('btn-checkin').textContent.trim();
-  assert(label.includes('已选 0/1'), `Planned progress was polluted by extra item: ${label}`);
+  assert(label.includes('已选 0/2'), `Planned progress was not counting the extra item: ${label}`);
+  assert(doc().querySelector('.exercise-done[data-customid]') && !doc().querySelector('.exercise-done[data-customid]').classList.contains('checked'), 'Custom item should start unchecked');
 });
 
 test('checking in with only extra items saves custom duration and no planned exercises', async () => {
   await resetApp();
-  makeTodayPlan();
+  const today = app().todayDayName();
+  const weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+  app().savePlan({
+    id: 'extra_only_plan',
+    createdAt: new Date().toISOString(),
+    goals: ['核心'],
+    daysPerWeek: 1,
+    durationPerDay: 30,
+    equipment: ['自重'],
+    days: Object.fromEntries(weekdays.map(day => [
+      day,
+      day === today ? { targets: ['核心'], exercises: [] } : null,
+    ])),
+  });
   app().renderToday();
 
   await addExtraItem('拉伸', '10');
+  clickCustomItemToggle();
   const btn = doc().getElementById('btn-checkin');
   assert(!btn.disabled, 'Check-in button should be enabled when extra items exist');
   btn.click();
@@ -299,6 +320,23 @@ test('checking in with only extra items saves custom duration and no planned exe
   assert(checkin.completedExercises.length === 0, 'Unexpected planned exercises were saved');
   assert(checkin.customItems.length === 1, 'Custom item was not saved');
   assert(checkin.totalDuration === 10, 'Custom duration was not included');
+});
+
+test('custom item increases the progress denominator and can be completed with the plan', async () => {
+  await resetApp();
+  makeTodayPlan();
+  app().renderToday();
+
+  await addExtraItem('拉伸', '10');
+  const planDone = doc().querySelector('.exercise-done[data-exid]');
+  planDone.click();
+  const labelBefore = doc().getElementById('btn-checkin').textContent.trim();
+  assert(labelBefore.includes('已选 1/2'), `Progress denominator should include the custom item: ${labelBefore}`);
+
+  clickCustomItemToggle();
+
+  const label = doc().getElementById('btn-checkin').textContent.trim();
+  assert(label.includes('完成今日训练，打卡'), `Progress should reach completion after the custom item is checked: ${label}`);
 });
 
 test('after check-in, adding another extra item appends to the existing record', async () => {
@@ -328,13 +366,15 @@ test('history displays saved check-ins without depending on removed custom exerc
     planId: 'test_plan',
     completedExercises: ['custom_deleted'],
     totalDuration: 8,
-    customItems: [],
+    customItems: [{ id: 'extra_1', name: '拉伸', duration: 5, checked: true }],
     checkedAt: new Date().toISOString(),
   });
 
   app().renderHistory();
 
-  assert(doc().querySelector('#tab-history').textContent.includes('custom_deleted'), 'History should show unknown saved exercise ids');
+  const text = doc().querySelector('#tab-history').textContent;
+  assert(text.includes('custom_deleted'), 'History should show unknown saved exercise ids');
+  assert(text.includes('拉伸'), 'History should show custom items');
 });
 
 async function run() {

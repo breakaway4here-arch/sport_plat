@@ -735,9 +735,12 @@ function renderToday() {
   const completedIds = checkin ? checkin.completedExercises : [];
   const totalExercises = dayPlan.exercises.length;
   const completedCount = completedIds.length;
-  const progress = totalExercises > 0 ? Math.round(completedCount / totalExercises * 100) : 0;
   const customItems = checkin?.customItems || pendingCustomItemsByDate[todayStrVal] || [];
-  const canCheckin = completedCount > 0 || customItems.length > 0;
+  const customCompletedCount = checkin ? customItems.length : customItems.filter(item => item.checked).length;
+  const totalItems = totalExercises + customItems.length;
+  const finishedItems = completedCount + customCompletedCount;
+  const progress = totalItems > 0 ? Math.round(finishedItems / totalItems * 100) : 0;
+  const canCheckin = totalItems > 0 && finishedItems === totalItems;
 
   el.innerHTML = `
     <div class="card">
@@ -747,7 +750,7 @@ function renderToday() {
         <span style="margin-left:auto;">约${dayPlan.exercises.reduce((s, e) => s + e.duration, 0)}分钟</span>
       </div>
       <div class="progress-bar"><div class="progress-fill" style="width:${progress}%"></div></div>
-      <div style="text-align:right;font-size:0.78rem;color:var(--text-secondary);font-weight:500;">${completedCount}/${totalExercises}</div>
+      <div style="text-align:right;font-size:0.78rem;color:var(--text-secondary);font-weight:500;">${finishedItems}/${totalItems}</div>
     </div>
 
     ${dayPlan.exercises.map(ex => {
@@ -777,14 +780,16 @@ function renderToday() {
             <div class="ex-name">${escapeHTML(ci.name)}</div>
             <div class="ex-meta"><span>额外项目</span><span>约${escapeHTML(ci.duration || 0)}分钟</span></div>
           </div>
-          <div class="exercise-done checked">✓</div>
+          <div class="exercise-done ${checkin ? 'checked' : ci.checked ? 'checked' : ''}" data-customid="${escapeHTML(ci.id || '')}">
+            ${checkin || ci.checked ? '✓' : ''}
+          </div>
         </div>
       `).join('')}
 
     <button class="btn btn-outline btn-add-extra" id="btn-add-custom-item">添加额外项目</button>
 
-    <button class="btn ${completedCount === totalExercises ? 'btn-success' : 'btn-primary'}" id="btn-checkin" ${canCheckin ? '' : 'disabled'}>
-      ${completedCount === totalExercises ? '完成今日训练，打卡' : `已选 ${completedCount}/${totalExercises} 项`}
+    <button class="btn ${canCheckin ? 'btn-success' : 'btn-primary'}" id="btn-checkin" ${canCheckin ? '' : 'disabled'}>
+      ${canCheckin ? '完成今日训练，打卡' : `已选 ${finishedItems}/${totalItems} 项`}
     </button>
     ${checkin ? `<div style="text-align:center;margin-top:10px;color:var(--success);font-size:0.85rem;font-weight:600;">✓ 今日已打卡 · ${checkin.totalDuration || 0}分钟</div>` : ''}
   `;
@@ -796,15 +801,23 @@ function renderToday() {
   });
 
   // 点击切换完成状态
-  el.querySelectorAll('.exercise-done[data-exid]').forEach(dot => {
+  el.querySelectorAll('.exercise-done[data-exid], .exercise-done[data-customid]').forEach(dot => {
     const exId = dot.dataset.exid;
+    const customId = dot.dataset.customid;
     if (checkin && checkin.completedExercises.includes(exId)) {
       // 已打卡的不能取消（简化逻辑：打卡后不可撤销今日）
+      dot.style.pointerEvents = 'none';
+    } else if (checkin && customId) {
       dot.style.pointerEvents = 'none';
     } else {
       dot.addEventListener('click', () => {
         dot.classList.toggle('checked');
         dot.textContent = dot.classList.contains('checked') ? '✓' : '';
+        if (customId) {
+          const pending = pendingCustomItemsByDate[todayStrVal] || [];
+          const item = pending.find(ci => ci.id === customId);
+          if (item) item.checked = dot.classList.contains('checked');
+        }
         updateCheckinButton();
       });
     }
@@ -812,11 +825,15 @@ function renderToday() {
 
   function updateCheckinButton() {
     const checked = el.querySelectorAll('.exercise-done[data-exid].checked').length;
-    const pendingCustomCount = (checkin?.customItems || pendingCustomItemsByDate[todayStrVal] || []).length;
+    const pendingCustomCount = checkin
+      ? (checkin.customItems || []).length
+      : (pendingCustomItemsByDate[todayStrVal] || []).filter(ci => ci.checked).length;
     const btn = document.getElementById('btn-checkin');
-    btn.textContent = checked === totalExercises ? '完成今日训练，打卡' : `已选 ${checked}/${totalExercises} 项`;
-    btn.className = `btn ${checked === totalExercises ? 'btn-primary' : 'btn-outline'}`;
-    btn.disabled = checked === 0 && pendingCustomCount === 0;
+    const doneCount = checked + pendingCustomCount;
+    const totalCount = totalExercises + (checkin ? (checkin.customItems || []).length : (pendingCustomItemsByDate[todayStrVal] || []).length);
+    btn.textContent = doneCount === totalCount ? '完成今日训练，打卡' : `已选 ${doneCount}/${totalCount} 项`;
+    btn.className = `btn ${doneCount === totalCount ? 'btn-success' : 'btn-primary'}`;
+    btn.disabled = doneCount !== totalCount || totalCount === 0;
     btn.style.opacity = btn.disabled ? '0.5' : '1';
   }
 
@@ -825,7 +842,7 @@ function renderToday() {
   if (checkinBtn && !checkin) {
     checkinBtn.addEventListener('click', () => {
       const checked = Array.from(el.querySelectorAll('.exercise-done[data-exid].checked')).map(d => d.dataset.exid);
-      const customItems = pendingCustomItemsByDate[todayStrVal] || [];
+      const customItems = (pendingCustomItemsByDate[todayStrVal] || []).filter(ci => ci.checked);
       if (checked.length === 0 && customItems.length === 0) return;
       const totalDuration = dayPlan.exercises.filter(e => checked.includes(e.id)).reduce((s, e) => s + e.duration, 0);
       const customDuration = customItems.reduce((s, ci) => s + (ci.duration || 0), 0);
@@ -833,7 +850,12 @@ function renderToday() {
         planId: plan.id,
         completedExercises: checked,
         totalDuration: totalDuration + customDuration,
-        customItems,
+        customItems: customItems.map(ci => ({
+          id: ci.id,
+          name: ci.name,
+          duration: ci.duration,
+          checked: true,
+        })),
         checkedAt: new Date().toISOString(),
       });
       delete pendingCustomItemsByDate[todayStrVal];
@@ -872,7 +894,7 @@ function renderToday() {
         if (!name) { alert('请输入项目名称'); return; }
         const existingCheckin = getTodayCheckin(todayStrVal);
         if (existingCheckin) {
-          const customItems = [...(existingCheckin.customItems || []), { name, duration }];
+          const customItems = [...(existingCheckin.customItems || []), { id: 'extra_' + Date.now(), name, duration, checked: true }];
           saveCheckin(todayStrVal, {
             ...existingCheckin,
             totalDuration: (existingCheckin.totalDuration || 0) + duration,
@@ -880,7 +902,10 @@ function renderToday() {
             checkedAt: new Date().toISOString(),
           });
         } else {
-          pendingCustomItemsByDate[todayStrVal] = [...(pendingCustomItemsByDate[todayStrVal] || []), { name, duration }];
+          pendingCustomItemsByDate[todayStrVal] = [
+            ...(pendingCustomItemsByDate[todayStrVal] || []),
+            { id: 'extra_' + Date.now(), name, duration, checked: false },
+          ];
         }
         overlay.remove();
         renderToday();
@@ -946,11 +971,13 @@ function renderHistory() {
             const ex = getAllExercises().find(e => e.id === eid);
             return ex ? ex.name : eid;
           }).join('、');
+          const customNames = (c.customItems || []).map(ci => ci.name).join('、');
+          const detailNames = [exNames, customNames].filter(Boolean).join('、');
           const d = new Date(dateStr);
           const dayName = WEEKDAYS[(d.getDay() + 6) % 7];
           return `<div class="checkin-record">
             <div class="cr-date">${dateStr} ${dayName} · ${c.totalDuration || 0}分钟</div>
-            <div class="cr-detail">${exNames}</div>
+            <div class="cr-detail">${detailNames}</div>
           </div>`;
         }).join('')
       }
