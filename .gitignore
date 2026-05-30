@@ -1,3 +1,7 @@
 .cursorindexingignore
 .specstory/
 img_demo/
+.idea/
+__pycache__/
+*.pyc
+.playwright-mcp/
