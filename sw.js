@@ -1,4 +1,4 @@
-const CACHE_NAME = 'sport_plat_v4';
+const CACHE_NAME = 'sport_plat_v5';
 const ASSETS = [
   './',
   './index.html',
