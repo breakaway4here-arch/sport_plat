@@ -16,7 +16,7 @@ const pullRefreshState = {
   startY: 0,
   currentY: 0,
 };
-let currentTab = 'plan';
+let currentTab = 'today';
 
 function loadData() {
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -438,7 +438,7 @@ function getTodayTrainingSnapshot() {
 
 function getTodayStatusText(snapshot) {
   if (!snapshot.plan) {
-    return { kicker: '未开始', title: '先生成一周计划', subtitle: '定好目标、频率和器械后，今天训练会自动排出来。' };
+    return { kicker: '首次使用', title: '先生成你的第一周计划', subtitle: '选训练目标、训练日和器械后，今天该练什么会自动安排好。' };
   }
   if (!snapshot.dayPlan) {
     return { kicker: '恢复日', title: '今天安排休息', subtitle: '保持恢复节奏，明天继续推进训练。' };
@@ -569,7 +569,7 @@ function renderPlanTab() {
 
   el.innerHTML = `
     <div class="section-stack">
-      <div class="hero-card">
+      <div class="hero-card" id="plan-summary">
         <div class="hero-kicker">Weekly Program</div>
         <div class="hero-title">${plan ? '本周训练地图' : '先配置你的训练模板'}</div>
         <div class="hero-subtitle">${plan
@@ -592,9 +592,12 @@ function renderPlanTab() {
         </div>
       </div>
 
-      <div class="card">
-        <div class="card-title">训练模板</div>
-        <div class="card-subtitle">先选本周重点，再生成系统给你的训练编排。</div>
+      <div class="card plan-config-card" id="plan-config">
+        <div class="card-title">${plan ? '修改条件' : '训练模板'}</div>
+        <div class="card-subtitle">${plan
+          ? '当前计划已经生效。需要调整目标、训练日、时长或器械时，再从这里改动。'
+          : '先选本周重点，再生成系统给你的训练编排。'}
+        </div>
 
         <div class="section-label" style="margin-bottom:8px;">训练目标</div>
         <div class="chip-group" id="goal-chips">
@@ -617,7 +620,7 @@ function renderPlanTab() {
         </div>
 
         <div class="primary-actions">
-          <button class="btn btn-primary" id="btn-generate">生成训练计划</button>
+          <button class="btn btn-primary" id="btn-generate">${plan ? '按当前条件生成新计划' : '生成训练计划'}</button>
           <button class="btn btn-outline" id="btn-custom-ex">自定义动作</button>
         </div>
       </div>
@@ -1054,7 +1057,27 @@ function renderToday() {
   const streak = getCheckinStreak();
 
   if (!plan) {
-    el.innerHTML = `<div class="empty"><div class="icon">📋</div><p>还没有训练计划</p><p style="font-size:0.8rem;">去「计划」Tab 创建一个吧</p></div>`;
+    el.innerHTML = `
+      <div class="section-stack">
+        <div class="hero-card">
+          <div class="hero-kicker">${status.kicker}</div>
+          <div class="hero-title">${status.title}</div>
+          <div class="hero-subtitle">${status.subtitle}</div>
+          <div class="single-cta">
+            <button class="btn btn-primary" id="btn-go-plan">去生成计划</button>
+          </div>
+        </div>
+        <div class="card onboarding-card">
+          <div class="card-title">先做这 3 步</div>
+          <div class="today-onboarding-steps">
+            <div class="today-onboarding-step"><span>1</span><strong>选训练目标</strong></div>
+            <div class="today-onboarding-step"><span>2</span><strong>选每周训练日</strong></div>
+            <div class="today-onboarding-step"><span>3</span><strong>自动生成今天训练</strong></div>
+          </div>
+        </div>
+      </div>
+    `;
+    document.getElementById('btn-go-plan')?.addEventListener('click', () => switchTab('plan'));
     return;
   }
 
@@ -1073,14 +1096,18 @@ function renderToday() {
         </div>
         <div class="card">
           <div class="card-title">今天不训练</div>
-          <div class="card-subtitle">保持恢复也算训练节奏的一部分，明天直接回来继续推进。</div>
+          <div class="card-subtitle">保持恢复也算训练节奏的一部分。散步、拉伸或早睡都算今天的安排。</div>
           <div class="pill-row">
             <span class="target-tag" style="background:rgba(255,255,255,0.08);color:var(--text-secondary);">恢复日</span>
             <span class="target-tag" style="background:rgba(77,163,255,0.12);color:#8cc7ff;">建议散步 / 拉伸</span>
           </div>
+          <div class="single-cta">
+            <button class="btn btn-outline" id="btn-view-week-plan">查看本周安排</button>
+          </div>
         </div>
       </div>
     `;
+    document.getElementById('btn-view-week-plan')?.addEventListener('click', () => switchTab('plan'));
     return;
   }
 
@@ -1350,7 +1377,7 @@ function renderHistory() {
     <div class="hero-card">
       <div class="hero-kicker">Training Log</div>
       <div class="hero-title">${year} 年 ${month+1} 月训练记录</div>
-      <div class="hero-subtitle">月历看节奏，下面的训练日志看每天到底练了什么。</div>
+      <div class="hero-subtitle">先看最近几次训练，再用月历回看这个月的节奏。</div>
       <div class="hero-metrics">
         <div class="metric"><div class="metric-value">${sortedDates.length}</div><div class="metric-label">本月打卡</div></div>
         <div class="metric"><div class="metric-value">${monthMinutes}</div><div class="metric-label">本月分钟</div></div>
@@ -1358,15 +1385,11 @@ function renderHistory() {
       </div>
     </div>
 
-    <div class="card calendar-card">
-      <div class="card-title">${year}年${month+1}月</div>
-      ${calendarHTML}
-    </div>
-
     <div class="card">
-      <div class="card-title">本月打卡</div>
+      <div class="card-title">最近打卡</div>
+      <div class="card-subtitle">最近完成的训练会优先显示在这里。</div>
       <div class="history-list">
-      ${sortedDates.length === 0 ? '<div class="empty"><p>本月还没有打卡记录</p></div>' :
+      ${sortedDates.length === 0 ? '<div class="empty"><p>本月还没有打卡记录，先去训练页完成今天的第一组动作。</p></div>' :
         sortedDates.map(dateStr => {
           const c = monthCheckins[dateStr];
           const exNames = c.completedExercises.map(eid => {
@@ -1384,6 +1407,11 @@ function renderHistory() {
         }).join('')
       }
       </div>
+    </div>
+
+    <div class="card calendar-card">
+      <div class="card-title">${year}年${month+1}月</div>
+      ${calendarHTML}
     </div>
     </div>
   `;
@@ -1448,7 +1476,7 @@ function renderStats() {
     <div class="hero-card">
       <div class="hero-kicker">Performance</div>
       <div class="hero-title">训练表现总览</div>
-      <div class="hero-subtitle">看本周输出、本月投入，以及你最近训练最集中的部位。</div>
+      <div class="hero-subtitle">先看本周，再看本月，最后看你最近的训练趋势。</div>
       <div class="hero-metrics">
         <div class="metric"><div class="metric-value">${weekDays}</div><div class="metric-label">本周天数</div></div>
         <div class="metric"><div class="metric-value">${weekMinutes}</div><div class="metric-label">本周分钟</div></div>
@@ -1456,15 +1484,28 @@ function renderStats() {
       </div>
     </div>
 
-    <div class="stat-grid">
-      <div class="stat-box"><div class="num">${monthDays}</div><div class="label">本月训练天数</div></div>
-      <div class="stat-box"><div class="num">${monthMinutes}</div><div class="label">本月训练分钟</div></div>
-      <div class="stat-box"><div class="num">${allDates.length}</div><div class="label">累计打卡</div></div>
-      <div class="stat-box"><div class="num">${totalMinutes}</div><div class="label">累计总分钟</div></div>
+    <div class="card">
+      <div class="card-title">本周摘要</div>
+      <div class="stat-grid">
+        <div class="stat-box"><div class="num">${weekDays}</div><div class="label">本周训练天数</div></div>
+        <div class="stat-box"><div class="num">${weekMinutes}</div><div class="label">本周训练分钟</div></div>
+        <div class="stat-box"><div class="num">${Math.max(0, 7 - weekDays)}</div><div class="label">本周剩余天数</div></div>
+        <div class="stat-box"><div class="num">${streak}</div><div class="label">当前连续训练</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">本月摘要</div>
+      <div class="stat-grid">
+        <div class="stat-box"><div class="num">${monthDays}</div><div class="label">本月训练天数</div></div>
+        <div class="stat-box"><div class="num">${monthMinutes}</div><div class="label">本月训练分钟</div></div>
+        <div class="stat-box"><div class="num">${allDates.length}</div><div class="label">累计打卡</div></div>
+        <div class="stat-box"><div class="num">${totalMinutes}</div><div class="label">累计总分钟</div></div>
+      </div>
     </div>
 
     <div class="card streak-card">
-      <div class="card-title">连续训练火力</div>
+      <div class="card-title">连续训练</div>
       <div class="streak-circle" style="background:conic-gradient(var(--primary) ${Math.min(streak*36,360)}deg, var(--bg) 0deg);">
         <div class="streak-inner">
           <div style="font-size:1.8rem;font-weight:800;color:var(--primary);">${streak}</div>
@@ -1488,7 +1529,7 @@ function renderStats() {
     </div>
 
     <div class="card">
-      <div class="card-title">总览</div>
+      <div class="card-title">总览说明</div>
       <div style="font-size:0.88rem;color:var(--text-secondary);line-height:1.8;">
         你已经累计打卡 <strong style="color:var(--text);">${allDates.length}</strong> 天，完成 <strong style="color:var(--text);">${totalMinutes}</strong> 分钟训练。本周已经完成 <strong style="color:var(--text);">${weekDays}</strong> 天，保持这个节奏，月度数据会继续往上走。
       </div>
@@ -1499,10 +1540,8 @@ function renderStats() {
 
 // ====== 初始化 ======
 function init() {
-  renderPlanTab();
   const savedTab = getSavedActiveTab();
-  const plan = getCurrentPlan();
-  const defaultTab = plan ? 'today' : 'plan';
+  const defaultTab = 'today';
   switchTab(['plan', 'today', 'history', 'stats'].includes(savedTab) ? savedTab : defaultTab);
 
   document.querySelectorAll('.tab-btn').forEach(btn => {

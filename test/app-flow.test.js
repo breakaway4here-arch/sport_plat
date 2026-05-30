@@ -30,6 +30,31 @@ async function waitForAppReady() {
   throw new Error('App iframe did not finish loading');
 }
 
+async function clearAppState() {
+  app().localStorage.clear();
+  app().sessionStorage.clear();
+  try {
+    if ('serviceWorker' in app().navigator) {
+      const regs = await app().navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(reg => reg.unregister()));
+    }
+  } catch {}
+  try {
+    if ('caches' in app()) {
+      const keys = await app().caches.keys();
+      await Promise.all(keys.map(key => app().caches.delete(key)));
+    }
+  } catch {}
+}
+
+async function loadFreshApp() {
+  await clearAppState();
+  const load = waitForFrameLoad();
+  frame.src = `../index.html?t=${Date.now()}-${Math.random()}`;
+  await load;
+  await waitForAppReady();
+}
+
 function app() {
   return frame.contentWindow;
 }
@@ -86,25 +111,7 @@ function buildPlanForToday({
 }
 
 async function resetApp() {
-  const load = waitForFrameLoad();
-  frame.src = `../index.html?t=${Date.now()}-${Math.random()}`;
-  await load;
-  await waitForAppReady();
-
-  app().localStorage.clear();
-  app().sessionStorage.clear();
-  try {
-    if ('serviceWorker' in app().navigator) {
-      const regs = await app().navigator.serviceWorker.getRegistrations();
-      await Promise.all(regs.map(reg => reg.unregister()));
-    }
-  } catch {}
-  try {
-    if ('caches' in app()) {
-      const keys = await app().caches.keys();
-      await Promise.all(keys.map(key => app().caches.delete(key)));
-    }
-  } catch {}
+  await loadFreshApp();
   app().renderPlanTab();
   app().switchTab('plan');
 }
@@ -157,6 +164,24 @@ test('generates a weekly plan from selected goals, weekdays, duration, and equip
   assert(doc().querySelector('#plan-result .card'), 'Generated plan was not rendered');
 });
 
+test('defaults to training tab when no saved tab exists', async () => {
+  await loadFreshApp();
+
+  assert(doc().querySelector('#tab-today').classList.contains('active'), 'Training tab was not active on first load');
+  assert(doc().querySelector('.tab-btn[data-tab="today"]').classList.contains('active'), 'Training tab button was not active on first load');
+  assert(app().sessionStorage.getItem('sport_plat_active_tab') === 'today', 'Active tab was not saved as training');
+});
+
+test('training tab shows first-run guidance when no plan exists', async () => {
+  await loadFreshApp();
+
+  assert(doc().querySelector('#tab-today .hero-kicker').textContent.includes('首次使用'), 'First-run kicker was missing');
+  assert(doc().querySelector('#tab-today .hero-title').textContent.includes('先生成你的第一周计划'), 'First-run title was missing');
+  assert(doc().getElementById('btn-go-plan'), 'Primary plan CTA was missing');
+  assert(doc().querySelectorAll('#tab-today .btn-primary').length === 1, 'First-run state should have a single primary action');
+  assert(!doc().querySelector('#tab-today .exercise-item'), 'First-run state should not show workout items');
+});
+
 test('returning to the plan tab keeps selections and rendered results visible', async () => {
   await resetApp();
   await generateBasicPlan();
@@ -167,6 +192,22 @@ test('returning to the plan tab keeps selections and rendered results visible', 
   assert(selectedValues('#goal-chips').includes('胸'), 'Plan goal selection was not restored');
   assert(selectedValues('#weekday-chips').join(',') === '周一,周三,周五', 'Weekday selection was not restored');
   assert(doc().querySelector('#plan-result .card'), 'Plan result disappeared after tab switch');
+});
+
+test('plan tab shows the current summary before configuration controls', async () => {
+  await resetApp();
+  await generateBasicPlan();
+  app().switchTab('plan');
+
+  const planSection = doc().getElementById('tab-plan');
+  const summary = doc().getElementById('plan-summary');
+  const config = doc().getElementById('plan-config');
+
+  assert(summary, 'Plan summary block was missing');
+  assert(config, 'Plan configuration block was missing');
+  assert(planSection.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_CONTAINED_BY, 'Plan summary should belong to the plan tab');
+  assert(summary.compareDocumentPosition(config) & Node.DOCUMENT_POSITION_FOLLOWING, 'Plan summary should appear before configuration controls');
+  assert(summary.textContent.includes('本周训练地图'), 'Plan summary title was missing');
 });
 
 test('edit plan rerenders the plan tab without losing the saved constraints', async () => {
@@ -257,6 +298,39 @@ test('today tab warns after check-in and does not rewrite the saved historical d
   assert(app().getTodayTrainingSnapshot().duration === 55, 'Today snapshot did not reflect the new plan duration');
   assert(checkin.totalDuration === 40, 'Historical check-in duration should not be rewritten');
   assert(doc().querySelector('#tab-today').textContent.includes('总时长 40 分钟'), 'Checked-in summary should still reflect historical duration');
+});
+
+test('history and stats remain readable for unknown or sparse data', async () => {
+  await loadFreshApp();
+  const latestDay = '2026-05-29';
+  const olderDay = '2026-05-01';
+
+  app().saveCheckin(olderDay, {
+    planId: 'missing-plan',
+    completedExercises: ['unknown_exercise_id'],
+    totalDuration: 18,
+    customItems: [],
+    checkedAt: new Date().toISOString(),
+  });
+  app().saveCheckin(latestDay, {
+    planId: 'missing-plan',
+    completedExercises: ['also_unknown'],
+    totalDuration: 26,
+    customItems: [{ id: 'extra', name: '拉伸', duration: 10, checked: true }],
+    checkedAt: new Date().toISOString(),
+  });
+
+  app().switchTab('history');
+  const firstRecord = doc().querySelector('#tab-history .checkin-record');
+  assert(firstRecord.textContent.trim().startsWith(latestDay), 'History should show the newest record first');
+  assert(firstRecord.textContent.includes('also_unknown') || firstRecord.textContent.includes('拉伸'), 'History should keep sparse data readable');
+
+  app().switchTab('stats');
+  const titles = [...doc().querySelectorAll('#tab-stats .card-title')].map(el => el.textContent.trim());
+  assert(titles[0] === '本周摘要', 'Stats should start with the weekly summary');
+  assert(titles[1] === '本月摘要', 'Stats should show the monthly summary second');
+  assert(titles[2] === '连续训练', 'Stats should show streak third');
+  assert(titles[3] === '本月部位分布', 'Stats should show target distribution after streak');
 });
 
 test('custom exercises are available for future goals and equipment choices', async () => {
